@@ -5,11 +5,11 @@ jobs:
   build-dmg:
     runs-on: macos-latest
     steps:
-      - name: Checkout 2.3.1 Release
+      - name: Checkout 2.3.2 Release
         uses: actions/checkout@v4
         with:
           repository: 'sheeshcake/Flickv4'
-          ref: '2.3.1'
+          ref: '2.3.2'
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -31,8 +31,8 @@ jobs:
           EXPO_PUBLIC_SAMPLE_VIDEO_URL=https://media.w3.org/2010/05/sintel/trailer.mp4
           EXPO_PUBLIC_WATCH_PARTY_URL=
           TMDB_API_KEY=10116fa302c8fe0c2cbc38be17aa65a5
-          APP_VERSION=2.3.1
-          ANDROID_VERSION_CODE=20301
+          APP_VERSION=2.3.2
+          ANDROID_VERSION_CODE=20302
           EOF
 
           node -e '
@@ -46,6 +46,14 @@ jobs:
               fs.writeFileSync(file, content, "utf8");
             }
           '
+
+      - name: Patch Info.plist for Mac Execution
+        run: |
+          # Allow running natively on Apple Silicon Mac without restriction
+          /usr/libexec/PlistBuddy -c "Set :LSRequiresIPhoneOS false" ios/Flick/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :LSRequiresIPhoneOS bool false" ios/Flick/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" ios/Flick/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" ios/Flick/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" ios/Flick/Info.plist 2>/dev/null || true
 
       - name: Install Node Dependencies
         run: npm install --legacy-peer-deps
@@ -78,23 +86,24 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             archive
 
-      - name: Create Mac DMG Installer
+      - name: Package Mac DMG
         run: |
           cd ios
           mkdir -p dmg_root
           cp -r build/Flick.xcarchive/Products/Applications/Flick.app dmg_root/
           
-          # Ad-hoc sign the app for local macOS ARM64 execution
+          # Patch internal Info.plist inside the compiled .app bundle
+          /usr/libexec/PlistBuddy -c "Set :LSRequiresIPhoneOS false" dmg_root/Flick.app/Info.plist 2>/dev/null || true
+          
+          # Strip quarantine & sign for local macOS execution
+          xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
           
-          # Create drag-and-drop Applications shortcut
           ln -s /Applications dmg_root/Applications
-          
-          # Generate the DMG disk image
-          hdiutil create -volname "Flick v2.3.1" -srcfolder dmg_root -ov -format UDZO Flickv4-2.3.1.dmg
+          hdiutil create -volname "Flick v2.3.2" -srcfolder dmg_root -ov -format UDZO Flickv4-2.3.2.dmg
 
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flickv4-2.3.1-macOS-DMG
-          path: ios/Flickv4-2.3.1.dmg
+          name: Flickv4-2.3.2-macOS-DMG
+          path: ios/Flickv4-2.3.2.dmg
