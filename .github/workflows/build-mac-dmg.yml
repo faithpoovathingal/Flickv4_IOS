@@ -8,6 +8,16 @@ jobs:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
 
+      - name: Auto-Select Xcode 16+
+        run: |
+          XCODE_PATH=$(find /Applications -maxdepth 1 -name "Xcode_16*.app" | head -n 1)
+          if [ -z "$XCODE_PATH" ]; then
+            XCODE_PATH="/Applications/Xcode.app"
+          fi
+          echo "Selected Xcode: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -50,6 +60,13 @@ jobs:
       - name: Install CocoaPods
         run: |
           cd ios
+          rm -f Podfile.lock
+          if ! grep -q "pod 'MMKV', '2.3.0'" Podfile; then
+            sed -i '' '/target '\''Flick'\'' do/a\
+              pod '\''MMKV'\'', '\''2.3.0'\''\
+              pod '\''MMKVCore'\'', '\''2.3.0'\''
+            ' Podfile
+          fi
           pod install --repo-update
 
       - name: Build App Payload
@@ -62,6 +79,9 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            SWIFT_ENABLE_EXPLICIT_MODULES=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             build
 
       - name: Package Mac DMG
@@ -69,8 +89,10 @@ jobs:
           cd ios
           mkdir -p dmg_root
           
-          # Locate the compiled binary bundle
           APP_PATH=$(find build/Build/Products/Release-iphoneos -name "Flick.app" -maxdepth 1 | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build/Build/Products -name "*.app" -maxdepth 2 | head -n 1)
+          fi
           cp -R "$APP_PATH" dmg_root/Flick.app
           
           # Remove iPhone execution locks so macOS Finder recognizes it
@@ -79,11 +101,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" dmg_root/Flick.app/Info.plist 2>/dev/null || true
 
-          # Create macOS binary wrapper entrypoint
-          mkdir -p dmg_root/Flick.app/Contents/MacOS
-          cp dmg_root/Flick.app/Flick dmg_root/Flick.app/Contents/MacOS/Flick 2>/dev/null || true
-
-          # Ad-hoc sign for macOS execution Gatekeeper
+          # Ad-hoc sign for local macOS Gatekeeper
           xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
 
