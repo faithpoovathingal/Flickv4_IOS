@@ -3,10 +3,13 @@ on: workflow_dispatch
 
 jobs:
   build-dmg:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer || sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -77,15 +80,10 @@ jobs:
         run: |
           cd ios
           mkdir -p dmg_root
-          
-          # Grab the compiled Release-maccatalyst .app bundle
           APP_PATH=$(find derived_data/Build/Products/Release-maccatalyst -name "*.app" -maxdepth 1 | head -n 1)
           cp -R "$APP_PATH" dmg_root/Flick.app
-          
-          # Remove quarantine metadata and sign ad-hoc for local macOS Gatekeeper
           xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
-          
           ln -s /Applications dmg_root/Applications
           hdiutil create -volname "Flick v2.3.2" -srcfolder dmg_root -ov -format UDZO Flickv4-2.3.2-Mac.dmg
 
