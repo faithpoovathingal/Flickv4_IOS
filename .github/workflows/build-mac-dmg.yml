@@ -3,7 +3,7 @@ on: workflow_dispatch
 
 jobs:
   build-dmg:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
@@ -50,43 +50,45 @@ jobs:
       - name: Install CocoaPods
         run: |
           cd ios
+          rm -f Podfile.lock
+          if ! grep -q "pod 'MMKV', '2.3.0'" Podfile; then
+            sed -i '' '/target '\''Flick'\'' do/a\
+              pod '\''MMKV'\'', '\''2.3.0'\''\
+              pod '\''MMKVCore'\'', '\''2.3.0'\''
+            ' Podfile
+          fi
           pod install --repo-update
 
-      - name: Build Payload using Xcode
+      - name: Build Archive
         run: |
           cd ios
           xcodebuild -workspace Flick.xcworkspace \
             -scheme Flick \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath derived_data \
+            -sdk iphoneos \
+            -archivePath build/Flick.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            EXPANDED_CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            DEBUG_INFORMATION_FORMAT=dwarf \
-            build
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            archive
 
       - name: Package Mac DMG
         run: |
           cd ios
           mkdir -p dmg_root
           
-          # Copy the compiled application bundle from build output
-          APP_PATH=$(find derived_data/Build/Products/Release-iphoneos -name "Flick.app" -maxdepth 1 | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find derived_data/Build/Products -name "Flick.app" | head -n 1)
-          fi
-          cp -R "$APP_PATH" dmg_root/Flick.app
+          # Extract compiled Flick.app from the archive
+          cp -R build/Flick.xcarchive/Products/Applications/Flick.app dmg_root/Flick.app
           
-          # Configure metadata so macOS recognizes it
+          # Patch bundle metadata for macOS Apple Silicon execution
           /usr/libexec/PlistBuddy -c "Set :LSRequiresIPhoneOS false" dmg_root/Flick.app/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :LSRequiresIPhoneOS bool false" dmg_root/Flick.app/Info.plist
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" dmg_root/Flick.app/Info.plist 2>/dev/null || true
 
-          # Ad-hoc sign for macOS execution
+          # Ad-hoc sign bundle for macOS Gatekeeper
           xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
 
