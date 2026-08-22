@@ -62,39 +62,40 @@ jobs:
           fi
           pod install --repo-update
 
-      - name: Build Xcode Archive
+      - name: Compile App Binary
         run: |
           cd ios
           xcodebuild -workspace Flick.xcworkspace \
             -scheme Flick \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath build/Flick.xcarchive \
+            -derivedDataPath derived_data \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEBUG_INFORMATION_FORMAT=dwarf \
             SWIFT_ENABLE_EXPLICIT_MODULES=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            archive
+            build
 
       - name: Package Mac DMG
         run: |
           cd ios
           mkdir -p dmg_root
-          cp -R build/Flick.xcarchive/Products/Applications/Flick.app dmg_root/Flick.app
           
-          # Patch bundle metadata for macOS execution
+          APP_PATH=$(find derived_data/Build/Products/Release-iphoneos -name "Flick.app" -maxdepth 1 | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find derived_data/Build/Products -name "*.app" -maxdepth 2 | head -n 1)
+          fi
+          cp -R "$APP_PATH" dmg_root/Flick.app
+          
+          # Enable Apple Silicon Mac execution metadata
           /usr/libexec/PlistBuddy -c "Set :LSRequiresIPhoneOS false" dmg_root/Flick.app/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :LSRequiresIPhoneOS bool false" dmg_root/Flick.app/Info.plist
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" dmg_root/Flick.app/Info.plist 2>/dev/null || true
 
-          # Create a native wrapper launcher script inside the macOS bundle
-          mkdir -p dmg_root/Flick.app/Contents/MacOS
-          cp dmg_root/Flick.app/Flick dmg_root/Flick.app/Contents/MacOS/Flick 2>/dev/null || true
-          
-          # Sign bundle ad-hoc
+          # Ad-hoc sign for local macOS Gatekeeper
           xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
 
