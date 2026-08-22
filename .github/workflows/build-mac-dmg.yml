@@ -3,21 +3,18 @@ on: workflow_dispatch
 
 jobs:
   build-dmg:
-    runs-on: macos-15
+    runs-on: macos-14
     steps:
       - name: Checkout Current Branch
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
-        run: sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer || sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer || true
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: 'npm'
 
-      - name: Configure Xcode Node Environment & TMDB Keys
+      - name: Configure Environment & Keys
         run: |
           echo "export NODE_BINARY=$(which node)" > ios/.xcode.env.local
 
@@ -47,35 +44,24 @@ jobs:
             }
           '
 
-      - name: Install Node Dependencies
+      - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
       - name: Install CocoaPods
         run: |
           cd ios
-          rm -f Podfile.lock
-          if ! grep -q "pod 'MMKV', '2.3.0'" Podfile; then
-            sed -i '' '/target '\''Flick'\'' do/a\
-              pod '\''MMKV'\'', '\''2.3.0'\''\
-              pod '\''MMKVCore'\'', '\''2.3.0'\''
-            ' Podfile
-          fi
           pod install --repo-update
 
-      - name: Compile App Binary
+      - name: Build App Payload
         run: |
           cd ios
           xcodebuild -workspace Flick.xcworkspace \
             -scheme Flick \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath derived_data \
+            -sdk iphoneos \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEBUG_INFORMATION_FORMAT=dwarf \
-            SWIFT_ENABLE_EXPLICIT_MODULES=NO \
-            COMPILER_INDEX_STORE_ENABLE=NO \
             build
 
       - name: Package Mac DMG
@@ -83,19 +69,21 @@ jobs:
           cd ios
           mkdir -p dmg_root
           
-          APP_PATH=$(find derived_data/Build/Products/Release-iphoneos -name "Flick.app" -maxdepth 1 | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find derived_data/Build/Products -name "*.app" -maxdepth 2 | head -n 1)
-          fi
+          # Locate the compiled binary bundle
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "Flick.app" -maxdepth 1 | head -n 1)
           cp -R "$APP_PATH" dmg_root/Flick.app
           
-          # Enable Apple Silicon Mac execution metadata
+          # Remove iPhone execution locks so macOS Finder recognizes it
           /usr/libexec/PlistBuddy -c "Set :LSRequiresIPhoneOS false" dmg_root/Flick.app/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :LSRequiresIPhoneOS bool false" dmg_root/Flick.app/Info.plist
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" dmg_root/Flick.app/Info.plist 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" dmg_root/Flick.app/Info.plist 2>/dev/null || true
 
-          # Ad-hoc sign for local macOS Gatekeeper
+          # Create macOS binary wrapper entrypoint
+          mkdir -p dmg_root/Flick.app/Contents/MacOS
+          cp dmg_root/Flick.app/Flick dmg_root/Flick.app/Contents/MacOS/Flick 2>/dev/null || true
+
+          # Ad-hoc sign for macOS execution Gatekeeper
           xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
 
