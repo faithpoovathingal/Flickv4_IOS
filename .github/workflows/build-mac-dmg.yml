@@ -47,6 +47,10 @@ jobs:
             }
           '
 
+      - name: Enable Apple Silicon Mac Execution in Project
+        run: |
+          sed -i '' 's/SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;/SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;/g' ios/Flick.xcodeproj/project.pbxproj
+
       - name: Install Node Dependencies
         run: npm install --legacy-peer-deps
 
@@ -62,33 +66,42 @@ jobs:
           fi
           pod install --repo-update
 
-      - name: Build Native Mac Catalyst App
+      - name: Build Xcode Archive
         run: |
           cd ios
           xcodebuild -workspace Flick.xcworkspace \
             -scheme Flick \
             -configuration Release \
-            -destination 'platform=macOS,variant=Mac Catalyst' \
-            -derivedDataPath derived_data \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Flick.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEBUG_INFORMATION_FORMAT=dwarf \
-            build
+            SWIFT_ENABLE_EXPLICIT_MODULES=NO \
+            archive
 
       - name: Package Mac DMG
         run: |
           cd ios
           mkdir -p dmg_root
-          APP_PATH=$(find derived_data/Build/Products/Release-maccatalyst -name "*.app" -maxdepth 1 | head -n 1)
-          cp -R "$APP_PATH" dmg_root/Flick.app
+          cp -R build/Flick.xcarchive/Products/Applications/Flick.app dmg_root/Flick.app
+          
+          # Patch bundle metadata to remove iPhone-only restriction and allow Apple Silicon execution
+          /usr/libexec/PlistBuddy -c "Set :LSRequiresIPhoneOS false" dmg_root/Flick.app/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :LSRequiresIPhoneOS bool false" dmg_root/Flick.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily array" dmg_root/Flick.app/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:0 integer 1" dmg_root/Flick.app/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIDeviceFamily:1 integer 2" dmg_root/Flick.app/Info.plist 2>/dev/null || true
+
+          # Strip quarantine metadata and ad-hoc sign bundle
           xattr -cr dmg_root/Flick.app
           codesign --force --deep --sign - dmg_root/Flick.app
+
           ln -s /Applications dmg_root/Applications
           hdiutil create -volname "Flick v2.3.2" -srcfolder dmg_root -ov -format UDZO Flickv4-2.3.2-Mac.dmg
 
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flickv4-Mac-Catalyst-DMG
+          name: Flickv4-Mac-DMG
           path: ios/Flickv4-2.3.2-Mac.dmg
